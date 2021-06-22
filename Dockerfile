@@ -101,6 +101,7 @@ RUN micromamba install -y -n base -c conda-forge \
        ipympl \
        ipywidgets \
        matplotlib-base \
+       toyplot \
        numba \
        numexpr \
        pandas \
