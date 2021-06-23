@@ -1,19 +1,18 @@
-# Jupyter notebook using mamba
-FROM mambaorg/micromamba:latest
+# JupyterLab image using micromamba
+FROM debian:buster-slim
 
 LABEL maintainer="Zhang Maiyun <myzhang1029@hotmail.com>"
 
-ARG NB_USER="jovyan"
+ARG NB_USER="mamba"
 ARG NB_UID="1000"
 ARG NB_GID="100"
 
 USER root
 
-# base-notebook
-
 # Install all OS dependencies for fully functional notebook server
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
+    # base-notebook
     tini \
     wget \
     ca-certificates \
@@ -40,21 +39,39 @@ RUN apt-get update -y && \
     unzip \
     nano-tiny \
     # scipy-notebook
-    ffmpeg dvipng cm-super
+    ffmpeg dvipng cm-super && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt-get clean
-RUN rm -rf /var/lib/apt/lists/*
+# Install Micromamba
+# No need to keep the image small as micromamba does. Jupyter requires
+# those packages anyways
+ARG TARGETARCH
+ARG MAMBA_VERSION="latest"
+RUN [ "${TARGETARCH}" = 'arm64' ] && export ARCH='aarch64' || export ARCH='64' && \
+    wget -qO - "https://micromamba.snakepit.net/api/micromamba/linux-${ARCH}/${MAMBA_VERSION}" | \
+    tar -xj -C / bin/micromamba
 
-ENV CONDA_DIR=/opt/conda \
-    SHELL=/bin/bash \
+ENV SHELL=/bin/bash \
     NB_USER="${NB_USER}" \
     NB_UID=${NB_UID} \
     NB_GID=${NB_GID} \
+    ENV_NAME="base" \
+    MAMBA_ROOT_PREFIX="/opt/conda" \
     HOME="/home/${NB_USER}" \
-    PATH="${CONDA_DIR}/bin:${PATH}" \
-    LC_ALL=en_US.UTF-8 \
-    LANG=en_US.UTF-8 \
-    LANGUAGE=en_US.UTF-8
+    LC_ALL="en_US.UTF-8" \
+    LANG="en_US.UTF-8" \
+    LANGUAGE="en_US.UTF-8" \
+    PATH="${MAMBA_ROOT_PREFIX}/bin:${PATH}"
+
+# Make sure when users use the terminal, the locales are reasonable
+RUN sed -i.bak -e 's/^# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && \
+    locale-gen && \
+    update-locale && \
+    dpkg-reconfigure --frontend noninteractive locales
+
+# Otherwise /etc/profile clears PATH
+RUN echo "PATH=\"${PATH}\"" >> /etc/profile.d/path.sh
 
 # Copy a script that we will use to correct permissions after running certain commands
 COPY fix-permissions /usr/local/bin/fix-permissions
@@ -69,11 +86,13 @@ RUN echo "auth requisite pam_deny.so" >> /etc/pam.d/su && \
     sed -i.bak -e 's/^%admin/#%admin/' /etc/sudoers && \
     sed -i.bak -e 's/^%sudo/#%sudo/' /etc/sudoers && \
     useradd -l -m -s /bin/bash -N -u "${NB_UID}" "${NB_USER}" && \
-    mkdir -p "${CONDA_DIR}" && \
-    chown "${NB_USER}:${NB_GID}" "${CONDA_DIR}" && \
+    mkdir -p "${HOME}"
+RUN /bin/micromamba shell init -s bash -p "${MAMBA_ROOT_PREFIX}" && \
+    echo "micromamba activate ${ENV_NAME}" >> "${HOME}/.bashrc"
+RUN chown "${NB_USER}:${NB_GID}" "${MAMBA_ROOT_PREFIX}" && \
     chmod g+w /etc/passwd && \
     fix-permissions "${HOME}" && \
-    fix-permissions "${CONDA_DIR}"
+    fix-permissions "${MAMBA_ROOT_PREFIX}"
 
 # Create alternative for nano -> nano-tiny
 RUN update-alternatives --install /usr/bin/nano nano /bin/nano-tiny 10
@@ -81,13 +100,6 @@ RUN update-alternatives --install /usr/bin/nano nano /bin/nano-tiny 10
 USER ${NB_UID}
 
 RUN micromamba install -y -n base -c conda-forge \
-       # base notebook
-       notebook \
-       jupyterhub \
-       jupyterlab \
-       pyopenssl \
-       python \
-       requests \
        altair \
        beautifulsoup4 \
        bokeh \
@@ -100,14 +112,20 @@ RUN micromamba install -y -n base -c conda-forge \
        ipython \
        ipympl \
        ipywidgets \
+       jupyterhub \
+       jupyterlab \
+       jupyterlab-git \
        matplotlib-base \
-       toyplot \
+       notebook \
        numba \
        numexpr \
        pandas \
        patsy \
        protobuf \
+       pyopenssl \
        pytables \
+       python \
+       requests \
        scikit-image \
        scikit-learn \
        scipy \
@@ -115,10 +133,9 @@ RUN micromamba install -y -n base -c conda-forge \
        sqlalchemy \
        statsmodels \
        sympy \
+       toyplot \
        widgetsnbextension \
-       xlrd && \
-    fix-permissions "${CONDA_DIR}" && \
-    fix-permissions "/home/${NB_USER}"
+       xlrd
 
 RUN micromamba clean --all --yes
 
