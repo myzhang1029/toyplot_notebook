@@ -11,7 +11,8 @@ USER root
 
 # Install all OS dependencies for fully functional notebook server
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    --no-install-recommends \
     # base-notebook
     tini \
     wget \
@@ -58,10 +59,10 @@ ENV SHELL=/bin/bash \
     NB_GID=${NB_GID} \
     ENV_NAME="base" \
     MAMBA_ROOT_PREFIX="/opt/conda" \
-    HOME="/home/${NB_USER}" \
     LC_ALL="en_US.UTF-8" \
     LANG="en_US.UTF-8" \
-    LANGUAGE="en_US.UTF-8" \
+    LANGUAGE="en_US.UTF-8"
+ENV HOME="/home/${NB_USER}" \
     PATH="${MAMBA_ROOT_PREFIX}/bin:${PATH}"
 
 # Make sure when users use the terminal, the locales are reasonable
@@ -69,9 +70,6 @@ RUN sed -i.bak -e 's/^# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && \
     locale-gen && \
     update-locale && \
     dpkg-reconfigure --frontend noninteractive locales
-
-# Otherwise /etc/profile clears PATH
-RUN echo "PATH=\"${PATH}\"" >> /etc/profile.d/path.sh
 
 # Copy a script that we will use to correct permissions after running certain commands
 COPY fix-permissions /usr/local/bin/fix-permissions
@@ -82,14 +80,15 @@ RUN sed -i 's/^#force_color_prompt=yes/force_color_prompt=yes/' /etc/skel/.bashr
 
 # Create NB_USER with name ${NB_USER} user with UID=${NB_UID} and in the 'users' group
 # and make sure these dirs are writable by the `users` group.
+# Then initialize micromamba
 RUN echo "auth requisite pam_deny.so" >> /etc/pam.d/su && \
     sed -i.bak -e 's/^%admin/#%admin/' /etc/sudoers && \
     sed -i.bak -e 's/^%sudo/#%sudo/' /etc/sudoers && \
     useradd -l -m -s /bin/bash -N -u "${NB_UID}" "${NB_USER}" && \
-    mkdir -p "${HOME}"
-RUN /bin/micromamba shell init -s bash -p "${MAMBA_ROOT_PREFIX}" && \
-    echo "micromamba activate ${ENV_NAME}" >> "${HOME}/.bashrc"
-RUN chown "${NB_USER}:${NB_GID}" "${MAMBA_ROOT_PREFIX}" && \
+    mkdir -p "${HOME}" && \
+    /bin/micromamba shell init -s bash -p "${MAMBA_ROOT_PREFIX}" && \
+    echo "micromamba activate ${ENV_NAME}" >> "${HOME}/.bashrc" && \
+    chown "${NB_USER}:${NB_GID}" "${MAMBA_ROOT_PREFIX}" && \
     chmod g+w /etc/passwd && \
     fix-permissions "${HOME}" && \
     fix-permissions "${MAMBA_ROOT_PREFIX}"
@@ -135,9 +134,8 @@ RUN micromamba install -y -n base -c conda-forge \
        sympy \
        toyplot \
        widgetsnbextension \
-       xlrd
-
-RUN micromamba clean --all --yes
+       xlrd && \
+    micromamba clean --all --yes
 
 EXPOSE 8888
 
