@@ -1,5 +1,5 @@
 # JupyterLab image using micromamba
-FROM debian:buster-slim
+FROM debian:stable-slim
 
 LABEL maintainer="Zhang Maiyun <myzhang1029@hotmail.com>"
 
@@ -11,13 +11,13 @@ USER root
 
 # Install all OS dependencies for fully functional notebook server
 RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
     --no-install-recommends \
     # base-notebook
     tini \
     wget \
     ca-certificates \
-    sudo \
     locales \
     fonts-liberation \
     # minimal-notebook
@@ -38,9 +38,11 @@ RUN apt-get update -y && \
     # ----
     tzdata \
     unzip \
-    nano-tiny \
     # scipy-notebook
-    ffmpeg dvipng cm-super && \
+    ffmpeg dvipng cm-super \
+    # additional
+    cmake \
+    pkg-config && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -48,9 +50,8 @@ RUN apt-get update -y && \
 # No need to keep the image small as micromamba does. Jupyter requires
 # those packages anyways
 ARG TARGETARCH
-ARG MAMBA_VERSION="latest"
 RUN [ "${TARGETARCH}" = 'arm64' ] && export ARCH='aarch64' || export ARCH='64' && \
-    wget -qO - "https://micromamba.snakepit.net/api/micromamba/linux-${ARCH}/${MAMBA_VERSION}" | \
+    wget -qO - "https://micromamba.snakepit.net/api/micromamba/linux-${ARCH}/latest" | \
     tar -xj -C / bin/micromamba
 
 ENV SHELL=/bin/bash \
@@ -62,8 +63,8 @@ ENV SHELL=/bin/bash \
     LC_ALL="en_US.UTF-8" \
     LANG="en_US.UTF-8" \
     LANGUAGE="en_US.UTF-8"
-ENV HOME="/home/${NB_USER}" \
-    PATH="${MAMBA_ROOT_PREFIX}/bin:${PATH}"
+ENV HOME="/home/${NB_USER}"
+ENV PATH="${MAMBA_ROOT_PREFIX}/bin:${HOME}/.cargo/bin:${PATH}"
 
 # Make sure when users use the terminal, the locales are reasonable
 RUN sed -i.bak -e 's/^# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && \
@@ -81,10 +82,7 @@ RUN sed -i 's/^#force_color_prompt=yes/force_color_prompt=yes/' /etc/skel/.bashr
 # Create NB_USER with name ${NB_USER} user with UID=${NB_UID} and in the 'users' group
 # and make sure these dirs are writable by the `users` group.
 # Then initialize micromamba
-RUN echo "auth requisite pam_deny.so" >> /etc/pam.d/su && \
-    sed -i.bak -e 's/^%admin/#%admin/' /etc/sudoers && \
-    sed -i.bak -e 's/^%sudo/#%sudo/' /etc/sudoers && \
-    useradd -l -m -s /bin/bash -N -u "${NB_UID}" "${NB_USER}" && \
+RUN useradd -l -m -s /bin/bash -N -u "${NB_UID}" "${NB_USER}" && \
     mkdir -p "${HOME}" && \
     /bin/micromamba shell init -s bash -p "${MAMBA_ROOT_PREFIX}" && \
     echo "micromamba activate ${ENV_NAME}" >> "${HOME}/.bashrc" && \
@@ -92,9 +90,6 @@ RUN echo "auth requisite pam_deny.so" >> /etc/pam.d/su && \
     chmod g+w /etc/passwd && \
     fix-permissions "${HOME}" && \
     fix-permissions "${MAMBA_ROOT_PREFIX}"
-
-# Create alternative for nano -> nano-tiny
-RUN update-alternatives --install /usr/bin/nano nano /bin/nano-tiny 10
 
 USER ${NB_UID}
 
@@ -113,7 +108,10 @@ RUN micromamba install -y -n base -c conda-forge \
        ipywidgets \
        jupyterhub \
        jupyterlab \
+       # Git plugin
        jupyterlab-git \
+       # Needed for math rendering
+       jupyterlab-mathjax3 \
        matplotlib-base \
        notebook \
        numba \
@@ -134,8 +132,21 @@ RUN micromamba install -y -n base -c conda-forge \
        sympy \
        toyplot \
        widgetsnbextension \
-       xlrd && \
-    micromamba clean --all --yes
+       # C++ kernel
+       xeus-cling \
+       xlrd
+
+# ARM64 does not have Tensorflow in conda-forge yet
+RUN [ "${TARGETARCH}" = 'arm64' ] || \
+    micromamba install -y -n base -c conda-forge tensorflow
+RUN micromamba clean --all --yes
+
+# Install Rust
+RUN wget -qO- https://sh.rustup.rs | sh -s -- -y
+RUN rustup component add rust-src
+# Install Rust kernel
+RUN cargo install evcxr_jupyter
+RUN evcxr_jupyter --install
 
 EXPOSE 8888
 
