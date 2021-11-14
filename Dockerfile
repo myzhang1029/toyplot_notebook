@@ -134,12 +134,13 @@ RUN micromamba install -y -n base -c conda-forge \
        widgetsnbextension \
        # C++ kernel
        xeus-cling \
-       xlrd
+       xlrd && \
+       micromamba clean -ay
 
 # ARM64 does not have Tensorflow in conda-forge yet
 RUN [ "${TARGETARCH}" = 'arm64' ] || \
-    micromamba install -y -n base -c conda-forge tensorflow
-RUN micromamba clean --all --yes
+    micromamba install -y -n base -c conda-forge tensorflow && \
+    micromamba clean -ay
 
 # Install Rust
 RUN wget -qO- https://sh.rustup.rs | sh -s -- -y
